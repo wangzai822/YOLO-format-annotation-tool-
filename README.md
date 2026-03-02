@@ -253,4 +253,4 @@ If you need additional assistance (for example: splitting the README into smalle
 
 ---
 
-Made with ❤️ by wangzai822 / Created by wangzai822
+Made with 😎 by wangzai822 / Created by wangzai822
