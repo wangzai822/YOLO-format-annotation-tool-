@@ -253,11 +253,11 @@ This project is licensed under the MIT License. See the LICENSE file in the repo
 ## ✉️ 联系 / Contact
 
 GitHub: https://github.com/wangzai822/YOLO-format-annotation-tool-  
-If you need additional assistance (for example: splitting the README into smaller pieces for copying, example conversion scripts, or a customized README with screenshots/GIFs), reply and I will assist.
-
-
----
 
 Made with 😎 by wangzai822 / Created by wangzai822
 
 ✉️ wangw00821@gmail.com
+
+---
+
+
