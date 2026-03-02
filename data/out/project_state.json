@@ -1,6 +1,6 @@
 {
-  "input_dir": "E:\\yolo_gui_annotator\\data\\in\\spalling",
-  "output_dir": "E:\\yolo_gui_annotator\\data\\out",
+  "input_dir": "E:\\YOLO format annotation tool\\data\\in\\spalling",
+  "output_dir": "E:\\YOLO format annotation tool\\data\\out",
   "classes": [
     "spalling",
     "",
