@@ -1,7 +1,7 @@
 # 🎨 Ultralytics GUI 标注器 (JSON) — Ultralytics GUI Annotator (JSON)
 
 <p align="center">
-  <img src="demo.png" width="900" title="Project Demo">
+  <img src="/demo/demo.png" width="900" title="Project Demo">
 </p>
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)  
