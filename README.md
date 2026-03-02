@@ -1,5 +1,9 @@
 # 🎨 Ultralytics GUI 标注器 (JSON) — Ultralytics GUI Annotator (JSON)
 
+<p align="center">
+  <img src="demo.png" width="900" title="Project Demo">
+</p>
+
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)  
 [![PySide6](https://img.shields.io/badge/UI-PySide6-green.svg)](https://pypi.org/project/PySide6/)  
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -251,6 +255,9 @@ This project is licensed under the MIT License. See the LICENSE file in the repo
 GitHub: https://github.com/wangzai822/YOLO-format-annotation-tool-  
 If you need additional assistance (for example: splitting the README into smaller pieces for copying, example conversion scripts, or a customized README with screenshots/GIFs), reply and I will assist.
 
+
 ---
 
 Made with 😎 by wangzai822 / Created by wangzai822
+
+✉️ wangw00821@gmail.com
