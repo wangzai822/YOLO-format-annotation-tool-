@@ -15,17 +15,52 @@ from PySide6.QtGui import (
     QPainterPathStroker,
     QPen,
     QPolygonF,
-    QCursor,
 )
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QGraphicsSceneMouseEvent
 
 from .io_utils import norm_xy
 
+DISTINCT_COLOR_HEX = [
+    "#e53935",
+    "#1e88e5",
+    "#43a047",
+    "#fb8c00",
+    "#8e24aa",
+    "#00acc1",
+    "#f4511e",
+    "#3949ab",
+    "#7cb342",
+    "#d81b60",
+    "#00897b",
+    "#5e35b1",
+    "#c0ca33",
+    "#6d4c41",
+    "#039be5",
+    "#ef6c00",
+]
 
-def item_color(uid: str) -> QColor:
-    """显著改进颜色随机算法"""
-    h_raw = int(zlib.crc32(uid.encode("utf-8"))) & 0xFFFFFFFF
-    return QColor.fromHsv(h_raw % 360, 150 + ((h_raw >> 8) % 100), 180 + ((h_raw >> 16) % 70))
+
+def item_color(uid: str, order_hint: int = 0) -> QColor:
+    """
+    Use a high-contrast palette first, then rotate hue/lightness for overflow.
+    This makes overlapping bbox/polygon pairs much easier to distinguish.
+    """
+    seed = int(order_hint or 0)
+    if seed <= 0:
+        seed = (int(zlib.crc32(uid.encode("utf-8"))) & 0xFFFFFFFF) + 1
+
+    idx = (seed - 1) % len(DISTINCT_COLOR_HEX)
+    cycle = (seed - 1) // len(DISTINCT_COLOR_HEX)
+
+    c = QColor(DISTINCT_COLOR_HEX[idx])
+    if cycle <= 0:
+        return c
+
+    h, s, v, _ = c.getHsv()
+    h = (h + 29 * cycle) % 360
+    s = min(255, max(170, s + 10 * (cycle % 2)))
+    v = max(150, min(245, v - 12 * (cycle % 3)))
+    return QColor.fromHsv(h, s, v)
 
 
 def _rot_local_to_scene(v: QPointF, deg: float) -> QPointF:
@@ -42,7 +77,6 @@ def _rot_scene_to_local(v: QPointF, deg: float) -> QPointF:
 
 ROTATE_HANDLE_OFFSET = 26.0
 MIN_SIZE = 2.0
-HANDLE_DRAW_PX = 10.0
 HANDLE_HIT_PX = 60.0
 ROT_HIT_PX = 80.0
 VTX_HIT_PX = 60.0
@@ -71,14 +105,19 @@ class EditableBase(QGraphicsObject):
         self._cached_scale = 1.0
         self._suspend_bounds_clamp = False
 
-    def _update_scale_cache(self):
+    def _update_scale_cache(self) -> None:
         sc = self.scene()
         if sc and sc.views():
             self._cached_scale = max(1e-6, sc.views()[0].transform().m11())
 
+    def _display_color(self) -> QColor:
+        return item_color(self.uid, int(getattr(self, "created_index", 0) or 0))
+
     def get_anno_id(self) -> str:
         name = self.scene().property("image_name") if self.scene() else None
-        return f"{name}_{self.uid[:8]}" if name else f"{getattr(self, 'anno_type', 'anno')}_{self.uid[:8]}"
+        if name:
+            return f"{name}_{self.uid[:8]}"
+        return f"{getattr(self, 'anno_type', 'anno')}_{self.uid[:8]}"
 
     def _is_in_draw_mode(self) -> bool:
         sc = self.scene()
@@ -131,8 +170,14 @@ class EditableBase(QGraphicsObject):
             "bounds_warning",
             {
                 "sides": sides,
-                "image_text": f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  y[{img.top():.0f}, {img.bottom():.0f}]",
-                "cursor_text": f"Cursor 光标: ({raw_p.x():.1f}, {raw_p.y():.1f}) -> ({clamped_p.x():.1f}, {clamped_p.y():.1f})",
+                "image_text": (
+                    f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  "
+                    f"y[{img.top():.0f}, {img.bottom():.0f}]"
+                ),
+                "cursor_text": (
+                    f"Cursor 光标: ({raw_p.x():.1f}, {raw_p.y():.1f}) -> "
+                    f"({clamped_p.x():.1f}, {clamped_p.y():.1f})"
+                ),
                 "anno_text": anno_text,
             },
         )
@@ -159,7 +204,10 @@ class EditableBase(QGraphicsObject):
             "bounds_warning",
             {
                 "sides": sides,
-                "image_text": f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  y[{img.top():.0f}, {img.bottom():.0f}]",
+                "image_text": (
+                    f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  "
+                    f"y[{img.top():.0f}, {img.bottom():.0f}]"
+                ),
                 "cursor_text": (
                     f"Raw 标注原始: ({raw_rect.left():.1f}, {raw_rect.top():.1f})"
                     f" - ({raw_rect.right():.1f}, {raw_rect.bottom():.1f})"
@@ -182,12 +230,14 @@ class EditableBase(QGraphicsObject):
             for view in sc.views():
                 view.viewport().update()
 
-    def _paint_stats_hud(self, painter: QPainter):
+    def _paint_stats_hud(self, painter: QPainter) -> None:
         if not self._alt_highlight():
             return
+
         sc = self.scene()
         if not (sc and sc.views()):
             return
+
         items = [i for i in sc.items() if isinstance(i, EditableBase)]
         if not items or items[0] != self:
             return
@@ -214,9 +264,11 @@ class EditableBase(QGraphicsObject):
         painter.setPen(Qt.NoPen)
         painter.setBrush(QBrush(QColor(0, 0, 0, 210)))
         painter.drawRoundedRect(hud_rect, 8, 8)
+
         y = 45
         painter.setPen(QColor(0, 255, 255))
         painter.drawText(40, y, f"◆ Annotations 标注统计 (Total 总数: {total})")
+
         y += 25
         painter.setPen(Qt.white)
         painter.drawText(
@@ -224,6 +276,7 @@ class EditableBase(QGraphicsObject):
             y,
             f"BBox 框: {counts['bbox']} | OBB 旋转框: {counts['obb']} | Polygon 多边形: {counts['polygon']}",
         )
+
         y += 25
         painter.setPen(QColor(255, 50, 50) if noises else QColor(50, 255, 50))
         painter.drawText(50, y, f"Noise 噪声标注: {'None 无' if not noises else len(noises)}")
@@ -232,7 +285,7 @@ class EditableBase(QGraphicsObject):
             painter.drawText(65, y, f"-> {n}")
         painter.restore()
 
-    def _paint_alt_highlight(self, painter: QPainter, path: QPainterPath):
+    def _paint_alt_highlight(self, painter: QPainter, path: QPainterPath) -> None:
         if not self._alt_highlight():
             return
         painter.save()
@@ -240,6 +293,7 @@ class EditableBase(QGraphicsObject):
         p_bold.setCosmetic(True)
         painter.setPen(p_bold)
         painter.drawPath(path)
+
         p_contract = QPen(Qt.black, 1.0)
         p_contract.setCosmetic(True)
         painter.setPen(p_contract)
@@ -249,6 +303,7 @@ class EditableBase(QGraphicsObject):
     def _paint_alt_label(self, painter: QPainter, anchor: QPointF) -> None:
         if not self._alt_highlight():
             return
+
         text = f"Cls/类别 C{self.class_id + 1}  ID/标注 #{self.uid[:4]}"
         painter.save()
         fm = QFontMetricsF(painter.font())
@@ -262,11 +317,11 @@ class EditableBase(QGraphicsObject):
         painter.restore()
 
     def pen(self) -> QPen:
-        return QPen(item_color(self.uid), 2.0)
+        return QPen(self._display_color(), 2.0)
 
     def brush(self) -> QBrush:
-        c = item_color(self.uid)
-        c.setAlpha(45)
+        c = QColor(self._display_color())
+        c.setAlpha(52)
         return QBrush(c)
 
     def to_state(self) -> Dict[str, Any]:
@@ -291,10 +346,10 @@ class EditableBase(QGraphicsObject):
     def end_edit(self) -> None:
         if self._edit_before is None:
             return
-        b, a = self._edit_before, self.to_state()
+        before, after = self._edit_before, self.to_state()
         self._edit_before = None
-        if b != a:
-            self.edited.emit(self, b, a)
+        if before != after:
+            self.edited.emit(self, before, after)
 
     def mousePressEvent(self, event: QGraphicsSceneMouseEvent) -> None:
         self.begin_edit()
@@ -345,7 +400,8 @@ class EditableBase(QGraphicsObject):
 class RectLike(EditableBase):
     def __init__(self, w: float, h: float, class_id: int = 0):
         super().__init__(class_id=class_id)
-        self.w, self.h = float(max(1.0, w)), float(max(1.0, h))
+        self.w = float(max(1.0, w))
+        self.h = float(max(1.0, h))
         self._active_handle: Optional[str] = None
         self._resize_anchor_scene: Optional[QPointF] = None
         self._resize_anchor_sxsy: Optional[Tuple[float, float]] = None
@@ -364,10 +420,16 @@ class RectLike(EditableBase):
         poly = QPolygonF([self.mapToScene(p) for p in pts])
         return poly.boundingRect()
 
-    def _px_to_local(self, px: float) -> float:
-        sc = self.scene()
-        s = max(1e-6, sc.views()[0].transform().m11()) if sc and sc.views() else 1.0
-        return px / s
+    def to_state(self) -> Dict[str, Any]:
+        st = super().to_state()
+        st.update({"w": float(self.w), "h": float(self.h)})
+        return st
+
+    def apply_state(self, st: Dict[str, Any]) -> None:
+        self.prepareGeometryChange()
+        self.w = max(MIN_SIZE, float(st.get("w", self.w)))
+        self.h = max(MIN_SIZE, float(st.get("h", self.h)))
+        super().apply_state(st)
 
     def _hit_handle(self, p_local: QPointF) -> Optional[str]:
         if not self.isSelected():
@@ -403,7 +465,7 @@ class RectLike(EditableBase):
 
         return None
 
-    def hoverMoveEvent(self, event):
+    def hoverMoveEvent(self, event) -> None:
         if self.isSelected():
             h = self._hit_handle(event.pos())
             if h == HandleKind.ROT:
@@ -454,7 +516,7 @@ class RectLike(EditableBase):
                 painter.setBrush(QColor(255, 170, 0))
                 painter.drawEllipse(QPointF(0, -self.h / 2.0 - ROTATE_HANDLE_OFFSET), s / 2.0, s / 2.0)
 
-    def _start_resize(self, h):
+    def _start_resize(self, h: str) -> None:
         self._active_handle = h
         self._resize_rotation_deg = float(self.rotation())
         w2, h2 = self.w / 2.0, self.h / 2.0
@@ -469,7 +531,10 @@ class RectLike(EditableBase):
             HandleKind.R: (-w2, 0.0),
         }
         self._resize_anchor_scene = self.mapToScene(QPointF(m[h][0], m[h][1]))
-        self._resize_anchor_sxsy = (1 if m[h][0] > 0 else -1, 1 if m[h][1] > 0 else -1)
+        self._resize_anchor_sxsy = (
+            1 if m[h][0] > 0 else -1,
+            1 if m[h][1] > 0 else -1,
+        )
 
     def _apply_resize_pos(self, handle: str) -> None:
         if self._resize_anchor_scene is None or self._resize_anchor_sxsy is None:
@@ -564,7 +629,11 @@ class RectLike(EditableBase):
                     lo = mid
                 else:
                     hi = mid
-            self._set_resized_geometry(max(MIN_SIZE, raw_w * best), max(MIN_SIZE, raw_h * best), handle)
+            self._set_resized_geometry(
+                max(MIN_SIZE, raw_w * best),
+                max(MIN_SIZE, raw_h * best),
+                handle,
+            )
 
         corrected = self._content_scene_rect()
         if not self._inside_image_rect(corrected):
@@ -629,10 +698,7 @@ class RectLike(EditableBase):
                 self._set_bounds_warning_rect(raw_rect, corrected)
 
         elif self._resize_anchor_scene and self._resize_anchor_sxsy is not None:
-            vl = _rot_scene_to_local(
-                event.scenePos() - self._resize_anchor_scene,
-                self._resize_rotation_deg,
-            )
+            vl = _rot_scene_to_local(event.scenePos() - self._resize_anchor_scene, self._resize_rotation_deg)
             sx, sy = self._resize_anchor_sxsy
             hk = self._active_handle
 
@@ -658,17 +724,20 @@ class RectLike(EditableBase):
 class BBoxItem(RectLike):
     anno_type = "bbox"
 
-    def pen(self):
+    def pen(self) -> QPen:
         p = super().pen()
         p.setStyle(Qt.DashLine)
         return p
 
-    def ultralytics_row(self, iw, ih) -> str:
+    def ultralytics_row(self, iw: int, ih: int) -> str:
         r = self.mapToScene(self.local_rect()).boundingRect()
-        xc, yc, w, h = r.center().x() / iw, r.center().y() / ih, r.width() / iw, r.height() / ih
+        xc = r.center().x() / iw
+        yc = r.center().y() / ih
+        w = r.width() / iw
+        h = r.height() / ih
         return f"{self.class_id} {xc:.6f} {yc:.6f} {w:.6f} {h:.6f}"
 
-    def to_label_dict(self, iw, ih):
+    def to_label_dict(self, iw: int, ih: int) -> Dict[str, Any]:
         r = self.mapToScene(self.local_rect()).boundingRect()
         return {
             "id": self.get_anno_id(),
@@ -691,16 +760,19 @@ class OBBItem(RectLike):
         r = self.local_rect()
         return [self.mapToScene(p) for p in [r.topLeft(), r.topRight(), r.bottomRight(), r.bottomLeft()]]
 
-    def ultralytics_row(self, iw, ih) -> str:
+    def ultralytics_row(self, iw: int, ih: int) -> str:
         cs = self.corners_scene()
-        coords = []
+        coords: List[str] = []
         for p in cs:
             xn, yn = norm_xy(p.x(), p.y(), iw, ih)
             coords.extend([f"{xn:.6f}", f"{yn:.6f}"])
         return f"{self.class_id} " + " ".join(coords)
 
-    def to_label_dict(self, iw, ih):
-        cs = [[norm_xy(p.x(), p.y(), iw, ih)[0], norm_xy(p.x(), p.y(), iw, ih)[1]] for p in self.corners_scene()]
+    def to_label_dict(self, iw: int, ih: int) -> Dict[str, Any]:
+        cs = []
+        for p in self.corners_scene():
+            xn, yn = norm_xy(p.x(), p.y(), iw, ih)
+            cs.append([xn, yn])
         return {
             "id": self.get_anno_id(),
             "type": "obb",
@@ -716,25 +788,51 @@ class PolygonItem(EditableBase):
     def __init__(self, points: List[QPointF], class_id: int = 0):
         super().__init__(class_id=class_id)
         self.points = [QPointF(p) for p in points]
-        self._active_vtx = None
+        self._active_vtx: Optional[int] = None
         self._vertex_edit_mode = False
 
-    def set_vertex_edit_mode(self, on: bool):
+    def set_vertex_edit_mode(self, on: bool) -> None:
         self._vertex_edit_mode = bool(on)
         self.update()
 
-    def vertex_edit_mode(self):
+    def vertex_edit_mode(self) -> bool:
         return self._vertex_edit_mode
 
-    def boundingRect(self):
-        xs, ys = [p.x() for p in self.points], [p.y() for p in self.points]
-        return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)).adjusted(-5000, -5000, 5000, 5000)
+    def boundingRect(self) -> QRectF:
+        if not self.points:
+            return QRectF(-1.0, -1.0, 2.0, 2.0).adjusted(-5000, -5000, 5000, 5000)
+        xs = [p.x() for p in self.points]
+        ys = [p.y() for p in self.points]
+        return QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)).adjusted(
+            -5000, -5000, 5000, 5000
+        )
 
     def _content_scene_rect(self) -> QRectF:
         poly = QPolygonF([self.mapToScene(pt) for pt in self.points])
         return poly.boundingRect()
 
-    def hoverMoveEvent(self, event):
+    def to_state(self) -> Dict[str, Any]:
+        st = super().to_state()
+        st.update({"points": [[p.x(), p.y()] for p in self.points]})
+        return st
+
+    def apply_state(self, st: Dict[str, Any]) -> None:
+        pts = st.get("points", [])
+        parsed: List[QPointF] = []
+        if isinstance(pts, list):
+            for p in pts:
+                if not isinstance(p, (list, tuple)) or len(p) < 2:
+                    continue
+                try:
+                    parsed.append(QPointF(float(p[0]), float(p[1])))
+                except Exception:
+                    pass
+        if parsed:
+            self.prepareGeometryChange()
+            self.points = parsed
+        super().apply_state(st)
+
+    def hoverMoveEvent(self, event) -> None:
         if self._vertex_edit_mode:
             self._update_scale_cache()
             idx = self._nearest_vertex(event.pos())
@@ -747,7 +845,7 @@ class PolygonItem(EditableBase):
         self.unsetCursor()
         super().hoverMoveEvent(event)
 
-    def shape(self):
+    def shape(self) -> QPainterPath:
         if self._is_in_draw_mode():
             return QPainterPath()
         self._update_scale_cache()
@@ -757,7 +855,7 @@ class PolygonItem(EditableBase):
         s.setWidth(120.0 / self._cached_scale if self._vertex_edit_mode else 15.0 / self._cached_scale)
         return s.createStroke(b).united(b)
 
-    def paint(self, painter: QPainter, option, widget=None):
+    def paint(self, painter: QPainter, option, widget=None) -> None:
         pp = QPainterPath()
         pp.addPolygon(QPolygonF(self.points))
         if self._alt_highlight():
@@ -792,11 +890,15 @@ class PolygonItem(EditableBase):
                 anchor = QPointF(bb.center().x() - br.width() / 2.0, bb.top() - 30.0)
                 painter.setPen(Qt.NoPen)
                 painter.setBrush(QBrush(QColor(220, 0, 0, 230)))
-                painter.drawRoundedRect(QRectF(anchor.x(), anchor.y() - br.height(), br.width(), br.height()), 5, 5)
+                painter.drawRoundedRect(
+                    QRectF(anchor.x(), anchor.y() - br.height(), br.width(), br.height()),
+                    5,
+                    5,
+                )
                 painter.setPen(Qt.white)
                 painter.drawText(anchor, label)
 
-    def _nearest_vertex(self, p_local: QPointF):
+    def _nearest_vertex(self, p_local: QPointF) -> Optional[int]:
         if not self.points:
             return None
         return min(
@@ -804,13 +906,15 @@ class PolygonItem(EditableBase):
             key=lambda i: math.hypot(p_local.x() - self.points[i].x(), p_local.y() - self.points[i].y()),
         )
 
-    def mousePressEvent(self, event):
+    def mousePressEvent(self, event) -> None:
         if self._is_in_draw_mode():
             event.ignore()
             return
+
         self.begin_edit()
         ctrl = bool(event.modifiers() & Qt.ControlModifier)
         self.setFlag(QGraphicsItem.ItemIsMovable, ctrl)
+
         if self._vertex_edit_mode and event.button() == Qt.LeftButton and not ctrl:
             idx = self._nearest_vertex(event.pos())
             self._update_scale_cache()
@@ -821,9 +925,10 @@ class PolygonItem(EditableBase):
                 self._active_vtx = idx
                 event.accept()
                 return
+
         super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event):
+    def mouseMoveEvent(self, event) -> None:
         if self._active_vtx is not None:
             raw_scene = self.mapToScene(event.pos())
             clamped_scene = self._clamp_scene_point(raw_scene)
@@ -845,28 +950,25 @@ class PolygonItem(EditableBase):
 
         super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event):
+    def mouseReleaseEvent(self, event) -> None:
         super().mouseReleaseEvent(event)
         self._active_vtx = None
         self.end_edit()
 
-    def ultralytics_row(self, iw, ih) -> str:
-        pts = self.points
-        coords = []
-        for p in pts:
+    def ultralytics_row(self, iw: int, ih: int) -> str:
+        coords: List[str] = []
+        for p in self.points:
             sp = self.mapToScene(p)
             xn, yn = norm_xy(sp.x(), sp.y(), iw, ih)
             coords.extend([f"{xn:.6f}", f"{yn:.6f}"])
         return f"{self.class_id} " + " ".join(coords)
 
-    def to_label_dict(self, iw, ih):
-        pts = [
-            [
-                norm_xy(self.mapToScene(pt).x(), self.mapToScene(pt).y(), iw, ih)[0],
-                norm_xy(self.mapToScene(pt).x(), self.mapToScene(pt).y(), iw, ih)[1],
-            ]
-            for pt in self.points
-        ]
+    def to_label_dict(self, iw: int, ih: int) -> Dict[str, Any]:
+        pts = []
+        for pt in self.points:
+            sp = self.mapToScene(pt)
+            xn, yn = norm_xy(sp.x(), sp.y(), iw, ih)
+            pts.append([xn, yn])
         return {
             "id": self.get_anno_id(),
             "type": "polygon",

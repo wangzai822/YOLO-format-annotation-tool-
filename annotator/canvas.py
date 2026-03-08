@@ -57,11 +57,27 @@ class CanvasView(QGraphicsView):
 
     def _mode_hint(self, mode: str) -> str:
         if mode == ToolMode.SELECT:
-            return "Tool 工具: select  (double-click annotation to edit 双击标注进入编辑; drag edges to resize 拖动边缘缩放; right-click to exit edit 右键退出编辑)"
+            return (
+                "Tool 工具: select  "
+                "(double-click annotation to edit 双击标注进入编辑; "
+                "Ctrl+drag selected annotation 移动选中标注; "
+                "drag edges/handles to resize 拖动边缘/手柄缩放; "
+                "right-click to exit 右键退出编辑)"
+            )
         if mode in (ToolMode.BBOX, ToolMode.OBB):
-            return "Tool 工具: rect  (draw to create 拖拽绘制; double-click annotation to edit 双击标注进入编辑模式后可拉动手柄; right-click to exit 右键退出编辑)"
+            return (
+                "Tool 工具: rect  "
+                "(draw to create 拖拽绘制; "
+                "double-click annotation to edit 双击标注进入编辑; "
+                "right-click to exit/select 右键退出到选择模式)"
+            )
         if mode == ToolMode.POLY:
-            return "Tool 工具: poly  (left click to add points 左键加点; double-click mask to edit vertices 双击Mask进入顶点编辑; right-click to exit 右键退出)"
+            return (
+                "Tool 工具: poly  "
+                "(left click to add points 左键加点; "
+                "Enter/right-click to finish 回车/右键完成; "
+                "double-click mask to edit vertices 双击Mask进入顶点编辑)"
+            )
         return f"Tool 工具: {mode}"
 
     def set_mode(self, mode: str) -> None:
@@ -75,17 +91,20 @@ class CanvasView(QGraphicsView):
 
     def set_current_class(self, class_id: int) -> None:
         self.current_class_id = int(class_id)
-        self.status.emit(f"Class 类别: {self.current_class_id}")
+        self.status.emit(f"Class 类别 ID: {self.current_class_id}")
 
     def load_image(self, pix: QPixmap) -> None:
         self.scene.clear()
         self.pix_item = QGraphicsPixmapItem(pix)
         self.pix_item.setZValue(-1000)
         self.scene.addItem(self.pix_item)
+
         self.img_w = pix.width()
         self.img_h = pix.height()
         self.scene.setSceneRect(0, 0, self.img_w, self.img_h)
+
         self.scene.setProperty("bounds_warning", None)
+        self.scene.setProperty("image_name", None)
         self._cancel_in_progress()
 
     def fit_to_view(self) -> None:
@@ -119,8 +138,14 @@ class CanvasView(QGraphicsView):
             "bounds_warning",
             {
                 "sides": sides,
-                "image_text": f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  y[{img.top():.0f}, {img.bottom():.0f}]",
-                "cursor_text": f"Cursor 光标: ({raw_p.x():.1f}, {raw_p.y():.1f}) -> ({clamped_p.x():.1f}, {clamped_p.y():.1f})",
+                "image_text": (
+                    f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  "
+                    f"y[{img.top():.0f}, {img.bottom():.0f}]"
+                ),
+                "cursor_text": (
+                    f"Cursor 光标: ({raw_p.x():.1f}, {raw_p.y():.1f}) -> "
+                    f"({clamped_p.x():.1f}, {clamped_p.y():.1f})"
+                ),
                 "anno_text": anno_text,
             },
         )
@@ -142,7 +167,10 @@ class CanvasView(QGraphicsView):
             "bounds_warning",
             {
                 "sides": sides,
-                "image_text": f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  y[{img.top():.0f}, {img.bottom():.0f}]",
+                "image_text": (
+                    f"Image 图像: x[{img.left():.0f}, {img.right():.0f}]  "
+                    f"y[{img.top():.0f}, {img.bottom():.0f}]"
+                ),
                 "cursor_text": (
                     f"Raw 标注原始: ({raw_rect.left():.1f}, {raw_rect.top():.1f})"
                     f" - ({raw_rect.right():.1f}, {raw_rect.bottom():.1f})"
@@ -192,10 +220,26 @@ class CanvasView(QGraphicsView):
         painter.setBrush(QColor(120, 0, 0, 220))
         painter.drawRoundedRect(box, 8.0, 8.0)
         painter.setPen(QColor(255, 245, 245))
-        painter.drawText(QRectF(28.0, 28.0, 406.0, 18.0), Qt.AlignLeft | Qt.AlignVCenter, "Out of bounds 标注越界，已限制在图像范围内")
-        painter.drawText(QRectF(28.0, 48.0, 406.0, 16.0), Qt.AlignLeft | Qt.AlignVCenter, warn.get("image_text", ""))
-        painter.drawText(QRectF(28.0, 64.0, 406.0, 16.0), Qt.AlignLeft | Qt.AlignVCenter, warn.get("cursor_text", ""))
-        painter.drawText(QRectF(28.0, 80.0, 406.0, 16.0), Qt.AlignLeft | Qt.AlignVCenter, warn.get("anno_text", ""))
+        painter.drawText(
+            QRectF(28.0, 28.0, 406.0, 18.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            "Out of bounds 标注越界，已限制在图像范围内",
+        )
+        painter.drawText(
+            QRectF(28.0, 48.0, 406.0, 16.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            warn.get("image_text", ""),
+        )
+        painter.drawText(
+            QRectF(28.0, 64.0, 406.0, 16.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            warn.get("cursor_text", ""),
+        )
+        painter.drawText(
+            QRectF(28.0, 80.0, 406.0, 16.0),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            warn.get("anno_text", ""),
+        )
         painter.restore()
 
     def wheelEvent(self, event) -> None:
@@ -287,15 +331,27 @@ class CanvasView(QGraphicsView):
                 pass
 
             if shp.vertex_edit_mode():
-                self.status.emit("Mask vertex edit 顶点编辑: drag vertices to adjust 拖动顶点调整 (right-click to exit 右键退出编辑)")
+                self.status.emit(
+                    "Mask vertex edit 顶点编辑: drag vertices to adjust 拖动顶点调整 "
+                    "(Ctrl+drag shape 移动整体; right-click to exit 右键退出编辑)"
+                )
             else:
-                self.status.emit("Mask selected 已选中: drag to move 拖动移动; double-click for vertex edit 双击进入顶点编辑; right-click to exit 右键退出")
+                self.status.emit(
+                    "Mask selected 已选中: Ctrl+drag to move Ctrl+拖动移动; "
+                    "double-click for vertex edit 双击进入顶点编辑; right-click to exit 右键退出"
+                )
             event.accept()
             return
 
         self._set_all_polygon_vertex_edit(False)
-        self.status.emit("Box edit 框编辑: selected 已选中 (drag center to move 拖动中心移动; drag corners/handles to resize 拖动角点或手柄缩放; right-click to exit 右键退出)")
+        self.status.emit(
+            "Box edit 框编辑: selected 已选中 "
+            "(Ctrl+drag to move Ctrl+拖动移动; "
+            "drag corners/handles to resize 拖动角点或手柄缩放; "
+            "right-click to exit 右键退出)"
+        )
         event.accept()
+        return
 
     def mousePressEvent(self, event) -> None:
         if self.pix_item is None:
@@ -475,9 +531,11 @@ class CanvasView(QGraphicsView):
         if len(self._poly_points) < 3:
             self._cancel_in_progress()
             return
+
         item = PolygonItem(self._poly_points, class_id=self.current_class_id)
         item.setPos(QPointF(0.0, 0.0))
         self.created_item.emit(item)
+
         self._poly_points = []
         if self._poly_preview is not None:
             self.scene.removeItem(self._poly_preview)
