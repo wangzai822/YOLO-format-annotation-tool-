@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QPointF, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, QRect, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QPixmap, QUndoStack
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QStatusBar,
     QToolBar,
     QTreeWidget,
@@ -75,7 +76,8 @@ def dist(a, b) -> float:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.resize(1320, 860)
+        self.resize(1180, 760)
+        self.setMinimumSize(820, 560)
 
         self.undo_stack = QUndoStack(self)
         self.state = ProjectState()
@@ -92,6 +94,8 @@ class MainWindow(QMainWindow):
         self._create_counter = 0
         self._suspend_autosave = False
         self._alt_down = False
+        self._responsive_layout_applied = False
+        self._screen_change_connected = False
 
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
@@ -123,6 +127,85 @@ class MainWindow(QMainWindow):
         self._refresh_class_tree()
         self._refresh_ann_tree()
         self._update_window_title()
+
+    # ---------- Responsive window ----------
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._ensure_screen_tracking()
+        if not self._responsive_layout_applied:
+            self._apply_responsive_layout(force=True)
+
+    def _ensure_screen_tracking(self) -> None:
+        if self._screen_change_connected:
+            return
+
+        handle = self.windowHandle()
+        if handle is None:
+            return
+
+        handle.screenChanged.connect(self._on_screen_changed)
+        self._screen_change_connected = True
+
+    def _on_screen_changed(self, _screen) -> None:
+        QTimer.singleShot(0, lambda: self._apply_responsive_layout(force=True))
+
+    def _available_screen_geometry(self) -> QRect:
+        handle = self.windowHandle()
+        if handle is not None and handle.screen() is not None:
+            return handle.screen().availableGeometry()
+
+        screen = self.screen()
+        if screen is not None:
+            return screen.availableGeometry()
+
+        app = QApplication.instance()
+        if app is not None:
+            primary = app.primaryScreen()
+            if primary is not None:
+                return primary.availableGeometry()
+
+        return QRect(0, 0, 1320, 860)
+
+    def _apply_responsive_layout(self, force: bool = False) -> None:
+        if not hasattr(self, "dock_left"):
+            return
+
+        available = self._available_screen_geometry()
+        if available.width() <= 0 or available.height() <= 0:
+            return
+
+        usable_w = max(760, available.width() - 24)
+        usable_h = max(560, available.height() - 40)
+
+        target_w = min(usable_w, max(980, int(available.width() * 0.92)))
+        target_h = min(usable_h, max(620, int(available.height() * 0.90)))
+
+        if force or not self._responsive_layout_applied:
+            self.resize(target_w, target_h)
+            frame = self.frameGeometry()
+            frame.moveCenter(available.center())
+            top_left = frame.topLeft()
+            if top_left.x() < available.left():
+                top_left.setX(available.left())
+            if top_left.y() < available.top():
+                top_left.setY(available.top())
+            self.move(top_left)
+
+        compact = available.height() < 900 or available.width() < 1440
+
+        left_width = max(270, min(360, int(target_w * (0.30 if compact else 0.28))))
+        right_width = max(250, min(340, int(target_w * (0.24 if compact else 0.22))))
+        help_height = max(140, min(230, int(target_h * (0.24 if compact else 0.28))))
+        ann_height = max(240, target_h - help_height - 130)
+
+        self.dock_left.setMinimumWidth(250 if compact else 280)
+        self.dock_ann.setMinimumWidth(240 if compact else 260)
+        self.dock_help.setMinimumHeight(140)
+
+        self.resizeDocks([self.dock_left, self.dock_ann], [left_width, right_width], Qt.Horizontal)
+        self.resizeDocks([self.dock_ann, self.dock_help], [ann_height, help_height], Qt.Vertical)
+
+        self._responsive_layout_applied = True
 
     # ---------- Global events ----------
     def eventFilter(self, obj, event) -> bool:
@@ -277,10 +360,15 @@ class MainWindow(QMainWindow):
         self.setDockNestingEnabled(True)
 
         left_panel = QWidget(self)
+        left_panel.setMinimumWidth(0)
         v = QVBoxLayout(left_panel)
+        v.setContentsMargins(8, 8, 8, 8)
+        v.setSpacing(8)
 
         g_paths = QGroupBox("Paths 路径", left_panel)
         vp = QVBoxLayout(g_paths)
+        vp.setContentsMargins(8, 8, 8, 8)
+        vp.setSpacing(6)
 
         self.in_edit = QLineEdit()
         self.in_edit.setReadOnly(True)
@@ -309,10 +397,13 @@ class MainWindow(QMainWindow):
 
         g_formats = QGroupBox("Formats 格式", left_panel)
         vf = QVBoxLayout(g_formats)
+        vf.setContentsMargins(8, 8, 8, 8)
+        vf.setSpacing(6)
 
         import_row = QWidget(g_formats)
         hi = QHBoxLayout(import_row)
         hi.setContentsMargins(0, 0, 0, 0)
+        hi.setSpacing(6)
         hi.addWidget(QLabel("Import 导入格式:"))
         self.import_format_combo = QComboBox()
         for text, value in IMPORT_FORMAT_OPTIONS:
@@ -357,16 +448,19 @@ class MainWindow(QMainWindow):
 
         g_classes = QGroupBox("Classes 类别", left_panel)
         vc = QVBoxLayout(g_classes)
+        vc.setContentsMargins(8, 8, 8, 8)
+        vc.setSpacing(6)
 
         self.class_tree = QTreeWidget(self)
         self.class_tree.setHeaderHidden(True)
         self.class_tree.setSelectionMode(QTreeWidget.SingleSelection)
         self.class_tree.itemSelectionChanged.connect(self._on_class_tree_selection_changed)
-        vc.addWidget(self.class_tree)
+        vc.addWidget(self.class_tree, 1)
 
         name_row = QWidget(g_classes)
         hn = QHBoxLayout(name_row)
         hn.setContentsMargins(0, 0, 0, 0)
+        hn.setSpacing(6)
 
         self.class_name_edit = QLineEdit()
         self.class_name_edit.setPlaceholderText("Class name 类别名称 (Enter / Apply 应用)")
@@ -382,6 +476,7 @@ class MainWindow(QMainWindow):
         action_row = QWidget(g_classes)
         ha = QHBoxLayout(action_row)
         ha.setContentsMargins(0, 0, 0, 0)
+        ha.setSpacing(6)
 
         btn_add_class = QPushButton("Add 新增")
         btn_add_class.clicked.connect(self.add_class)
@@ -395,6 +490,9 @@ class MainWindow(QMainWindow):
 
         g_nav = QGroupBox("Save/Next 保存/翻页", left_panel)
         vn = QVBoxLayout(g_nav)
+        vn.setContentsMargins(8, 8, 8, 8)
+        vn.setSpacing(6)
+
         btn_save = QPushButton("Save 保存 (Ctrl+S)")
         btn_prev = QPushButton("Prev 上一张 (PageUp)")
         btn_next = QPushButton("Next 下一张 (N / PageDown)")
@@ -410,6 +508,9 @@ class MainWindow(QMainWindow):
 
         g_tools = QGroupBox("Tools 工具 (V/B/O/M)", left_panel)
         vt = QVBoxLayout(g_tools)
+        vt.setContentsMargins(8, 8, 8, 8)
+        vt.setSpacing(6)
+
         btn_v = QPushButton("Select 选择 (V)")
         btn_b = QPushButton("BBox 轴对齐框 (B)")
         btn_o = QPushButton("OBB 旋转框 (O)")
@@ -425,15 +526,19 @@ class MainWindow(QMainWindow):
 
         v.addWidget(g_paths)
         v.addWidget(g_formats)
-        v.addWidget(g_classes)
+        v.addWidget(g_classes, 1)
         v.addWidget(g_nav)
         v.addWidget(g_tools)
-        v.addStretch(1)
 
-        dock_left = QDockWidget("Project 项目", self)
-        dock_left.setWidget(left_panel)
-        dock_left.setMinimumWidth(340)
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock_left)
+        left_scroll = QScrollArea(self)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        left_scroll.setWidget(left_panel)
+
+        self.dock_left = QDockWidget("Project 项目", self)
+        self.dock_left.setWidget(left_scroll)
+        self.dock_left.setMinimumWidth(280)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.dock_left)
 
         self.ann_tree = QTreeWidget(self)
         self.ann_tree.setHeaderHidden(True)
@@ -441,10 +546,10 @@ class MainWindow(QMainWindow):
         self.ann_tree.itemSelectionChanged.connect(self._on_ann_tree_selection)
         self.ann_tree.itemChanged.connect(self._on_ann_tree_item_changed)
 
-        dock_ann = QDockWidget("Annotations 标注", self)
-        dock_ann.setWidget(self.ann_tree)
-        dock_ann.setMinimumWidth(320)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock_ann)
+        self.dock_ann = QDockWidget("Annotations 标注", self)
+        self.dock_ann.setWidget(self.ann_tree)
+        self.dock_ann.setMinimumWidth(260)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_ann)
 
         help_text = QLabel(
             "Shortcuts 快捷键:\n"
@@ -476,17 +581,20 @@ class MainWindow(QMainWindow):
         )
         help_text.setTextInteractionFlags(Qt.TextSelectableByMouse)
         help_text.setWordWrap(True)
+        help_text.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         help_text.setContentsMargins(10, 10, 10, 10)
 
-        dock_help = QDockWidget("Help 帮助", self)
-        dock_help.setWidget(help_text)
-        dock_help.setMinimumHeight(220)
-        self.addDockWidget(Qt.RightDockWidgetArea, dock_help)
+        help_scroll = QScrollArea(self)
+        help_scroll.setWidgetResizable(True)
+        help_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        help_scroll.setWidget(help_text)
 
-        # Put help under annotation tree so it no longer squeezes/overlaps the left bottom area.
-        self.splitDockWidget(dock_ann, dock_help, Qt.Vertical)
-        self.resizeDocks([dock_left, dock_ann], [360, 340], Qt.Horizontal)
-        self.resizeDocks([dock_ann, dock_help], [430, 240], Qt.Vertical)
+        self.dock_help = QDockWidget("Help 帮助", self)
+        self.dock_help.setWidget(help_scroll)
+        self.dock_help.setMinimumHeight(140)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.dock_help)
+
+        self.splitDockWidget(self.dock_ann, self.dock_help, Qt.Vertical)
 
     # ---------- Paths / dataset state ----------
     def _sync_path_edits(self) -> None:
@@ -629,7 +737,6 @@ class MainWindow(QMainWindow):
         new_input = Path(d)
         keep_index = self.input_dir is not None and new_input == self.input_dir
 
-        # Save old dataset state before switching to another dataset.
         if self.output_dir is not None and self.input_dir is not None and self.input_dir != new_input:
             self._save_project_state()
 
@@ -671,7 +778,6 @@ class MainWindow(QMainWindow):
         st_path = self.output_dir / "project_state.json"
         st = load_project_state(st_path)
 
-        # Keep current in-memory classes if user already picked an input folder in this session.
         if self.input_dir is None:
             self.state.classes = normalize_class_records(st.classes)
 
@@ -693,7 +799,6 @@ class MainWindow(QMainWindow):
             if self.images:
                 self.state.index = max(0, min(st.index, len(self.images) - 1))
 
-        # If a dataset-specific state exists, use it to replace global classes.
         if self.input_dir is not None:
             self._load_dataset_state_for_current_input(reset_if_missing=False)
             if self.images:
