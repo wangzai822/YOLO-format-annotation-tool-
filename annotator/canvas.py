@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QCursor, QKeyEvent, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QGraphicsPathItem,
     QGraphicsPixmapItem,
@@ -46,6 +46,8 @@ class CanvasView(QGraphicsView):
 
         self._space_panning = False
         self._pan_last: Optional[QPointF] = None
+        self._space_poly_point_pending = False
+        self._space_poly_pan_started = False
 
         self._draw_start: Optional[QPointF] = None
         self._preview_path: Optional[QGraphicsPathItem] = None
@@ -74,7 +76,7 @@ class CanvasView(QGraphicsView):
         if mode == ToolMode.POLY:
             return (
                 "Tool 工具: poly  "
-                "(left click to add points 左键加点; "
+                "(left click / Space to add points 左键/空格加点; "
                 "Enter/right-click to finish 回车/右键完成; "
                 "double-click mask to edit vertices 双击Mask进入顶点编辑)"
             )
@@ -188,6 +190,30 @@ class CanvasView(QGraphicsView):
             self.scene.setProperty("bounds_warning", None)
             self.viewport().update()
 
+    def _viewport_cursor_scene_pos(self) -> Optional[QPointF]:
+        view_pos = self.viewport().mapFromGlobal(QCursor.pos())
+        if not self.viewport().rect().contains(view_pos):
+            return None
+        return self.mapToScene(view_pos)
+
+    def _add_polygon_point(self, raw_sp: QPointF) -> None:
+        sp = self._clamp_scene_point(raw_sp)
+        self._poly_points.append(sp)
+        self._update_poly_preview(sp)
+        self._set_bounds_warning(raw_sp, sp, f"Point 点: ({sp.x():.1f}, {sp.y():.1f})")
+
+    def _add_polygon_point_from_cursor(self) -> bool:
+        if self.pix_item is None or self.mode != ToolMode.POLY:
+            return False
+
+        raw_sp = self._viewport_cursor_scene_pos()
+        if raw_sp is None:
+            self.status.emit("Move cursor onto canvas first 再将光标移动到画布后按空格加点.")
+            return False
+
+        self._add_polygon_point(raw_sp)
+        return True
+
     def drawForeground(self, painter: QPainter, rect) -> None:
         super().drawForeground(painter, rect)
         if self.pix_item is None:
@@ -260,6 +286,14 @@ class CanvasView(QGraphicsView):
             return
 
         if event.key() == Qt.Key_Space:
+            if self.mode == ToolMode.POLY:
+                if not event.isAutoRepeat():
+                    self._space_panning = True
+                    self._space_poly_point_pending = True
+                    self._space_poly_pan_started = False
+                event.accept()
+                return
+
             self._space_panning = True
             self.setCursor(Qt.ClosedHandCursor)
             event.accept()
@@ -269,9 +303,21 @@ class CanvasView(QGraphicsView):
 
     def keyReleaseEvent(self, event: QKeyEvent) -> None:
         if event.key() == Qt.Key_Space:
+            should_add_poly_point = (
+                self.mode == ToolMode.POLY
+                and self._space_poly_point_pending
+                and not self._space_poly_pan_started
+            )
+
             self._space_panning = False
             self._pan_last = None
+            self._space_poly_point_pending = False
+            self._space_poly_pan_started = False
             self.unsetCursor()
+
+            if should_add_poly_point:
+                self._add_polygon_point_from_cursor()
+
             event.accept()
             return
         super().keyReleaseEvent(event)
@@ -380,6 +426,9 @@ class CanvasView(QGraphicsView):
 
         if self._space_panning and event.button() == Qt.LeftButton:
             self._pan_last = event.position()
+            if self.mode == ToolMode.POLY and self._space_poly_point_pending:
+                self._space_poly_pan_started = True
+                self.setCursor(Qt.ClosedHandCursor)
             event.accept()
             return
 
@@ -406,9 +455,7 @@ class CanvasView(QGraphicsView):
             return
 
         if self.mode == ToolMode.POLY and event.button() == Qt.LeftButton:
-            self._poly_points.append(sp)
-            self._update_poly_preview(sp)
-            self._set_bounds_warning(raw_sp, sp, f"Point 点: ({sp.x():.1f}, {sp.y():.1f})")
+            self._add_polygon_point(raw_sp)
             event.accept()
             return
 
@@ -528,6 +575,9 @@ class CanvasView(QGraphicsView):
             self._poly_preview.setPath(path)
 
     def _finish_polygon(self) -> None:
+        self._space_poly_point_pending = False
+        self._space_poly_pan_started = False
+
         if len(self._poly_points) < 3:
             self._cancel_in_progress()
             return
@@ -545,6 +595,8 @@ class CanvasView(QGraphicsView):
     def _cancel_in_progress(self) -> None:
         self._draw_start = None
         self._poly_points = []
+        self._space_poly_point_pending = False
+        self._space_poly_pan_started = False
         if self._poly_preview is not None:
             self.scene.removeItem(self._poly_preview)
             self._poly_preview = None
